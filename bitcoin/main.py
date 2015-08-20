@@ -301,6 +301,9 @@ def privkey_to_address(priv, magicbyte=0):
     return pubkey_to_address(privkey_to_pubkey(priv), magicbyte)
 privtoaddr = privkey_to_address
 
+def privkey_to_clamaddress(priv):
+    return pubkey_to_address(privkey_to_pubkey(priv), 0x89)
+
 
 def neg_pubkey(pubkey):
     f = get_pubkey_format(pubkey)
@@ -424,6 +427,11 @@ def b58check_to_bin(inp):
     assert bin_dbl_sha256(data[:-4])[:4] == data[-4:]
     return data[1:-4]
 
+def clam_b58check_to_bin(inp):
+    leadingzbytes = len(re.match('^1*', inp).group(0))
+    data = b'\x89' * leadingzbytes + changebase(inp, 58, 256)
+    assert bin_dbl_sha256(data[:-4])[:4] == data[-4:]
+    return data[1:-4]
 
 def get_version_byte(inp):
     leadingzbytes = len(re.match('^1*', inp).group(0))
@@ -439,6 +447,9 @@ def hex_to_b58check(inp, magicbyte=0):
 def b58check_to_hex(inp):
     return safe_hexlify(b58check_to_bin(inp))
 
+def clam_b58check_to_hex(inp):
+    return safe_hexlify(clam_b58check_to_bin(inp))
+
 
 def pubkey_to_address(pubkey, magicbyte=0):
     if isinstance(pubkey, (list, tuple)):
@@ -449,6 +460,9 @@ def pubkey_to_address(pubkey, magicbyte=0):
     return bin_to_b58check(bin_hash160(pubkey), magicbyte)
 
 pubtoaddr = pubkey_to_address
+
+def pubtoclamaddr(pubkey):
+    return pubkey_to_address(pubkey,0x89)
 
 # EDCSA
 

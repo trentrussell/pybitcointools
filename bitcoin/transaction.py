@@ -1,5 +1,5 @@
 #!/usr/bin/python
-import binascii, re, json, copy, sys
+import binascii, re, json, copy, sys, time
 from bitcoin.main import *
 from _functools import reduce
 
@@ -93,6 +93,60 @@ def deserialize(tx):
     obj["locktime"] = read_as_int(4)
     return obj
 
+def clamdeserialize(tx):
+    if isinstance(tx, str) and re.match('^[0-9a-fA-F]*$', tx):
+        #tx = bytes(bytearray.fromhex(tx))
+        return json_changebase(clamdeserialize(binascii.unhexlify(tx)),
+                              lambda x: safe_hexlify(x))
+    # http://stackoverflow.com/questions/4851463/python-closure-write-to-variable-in-parent-scope
+    # Python's scoping rules are demented, requiring me to make pos an object
+    # so that it is call-by-reference
+    pos = [0]
+
+    def read_as_int(bytez):
+        pos[0] += bytez
+        return decode(tx[pos[0]-bytez:pos[0]][::-1], 256)
+
+    def read_var_int():
+        pos[0] += 1
+        
+        val = from_byte_to_int(tx[pos[0]-1])
+        if val < 253:
+            return val
+        return read_as_int(pow(2, val - 252))
+
+    def read_bytes(bytez):
+        pos[0] += bytez
+        return tx[pos[0]-bytez:pos[0]]
+
+    def read_var_string():
+        size = read_var_int()
+        return read_bytes(size)
+
+    obj = {"ins": [], "outs": []}
+    obj["version"] = read_as_int(4)
+    obj["time"] = read_as_int(4)
+    ins = read_var_int()
+    for i in range(ins):
+        obj["ins"].append({
+            "outpoint": {
+                "hash": read_bytes(32)[::-1],
+                "index": read_as_int(4)
+            },
+            "script": read_var_string(),
+            "sequence": read_as_int(4)
+        })
+    outs = read_var_int()
+    for i in range(outs):
+        obj["outs"].append({
+            "value": read_as_int(8),
+            "script": read_var_string()
+        })
+    obj["locktime"] = read_as_int(4)
+    if obj["version"] == 2:
+        obj["comment"] = read_var_string()
+    return obj
+
 def serialize(txobj):
     #if isinstance(txobj, bytes):
     #    txobj = bytes_to_hex_string(txobj)
@@ -116,6 +170,32 @@ def serialize(txobj):
 
     return ''.join(o) if is_python2 else reduce(lambda x,y: x+y, o, bytes())
 
+def clamserialize(txobj):
+    #if isinstance(txobj, bytes):
+    #    txobj = bytes_to_hex_string(txobj)
+    o = []
+    if json_is_base(txobj, 16):
+        json_changedbase = json_changebase(txobj, lambda x: binascii.unhexlify(x))
+        hexlified = safe_hexlify(clamserialize(json_changedbase))
+        return hexlified
+    o.append(encode(txobj["version"], 256, 4)[::-1])
+    o.append(encode(txobj["time"], 256, 4)[::-1])
+    o.append(num_to_var_int(len(txobj["ins"])))
+    for inp in txobj["ins"]:
+        o.append(inp["outpoint"]["hash"][::-1])
+        o.append(encode(inp["outpoint"]["index"], 256, 4)[::-1])
+        o.append(num_to_var_int(len(inp["script"]))+(inp["script"] if inp["script"] or is_python2 else bytes()))
+        o.append(encode(inp["sequence"], 256, 4)[::-1])
+    o.append(num_to_var_int(len(txobj["outs"])))
+    for out in txobj["outs"]:
+        o.append(encode(out["value"], 256, 8)[::-1])
+        o.append(num_to_var_int(len(out["script"]))+out["script"])
+    o.append(encode(txobj["locktime"], 256, 4)[::-1])
+    if txobj["version"] == 2:
+        o.append(num_to_var_int(len(txobj["comment"]))+(txobj["comment"] if txobj["comment"] or is_python2 else bytes()))
+
+    return ''.join(o) if is_python2 else reduce(lambda x,y: x+y, o, bytes())
+
 # Hashing transactions for signing
 
 SIGHASH_ALL = 1
@@ -130,6 +210,27 @@ def signature_form(tx, i, script, hashcode=SIGHASH_ALL):
     i, hashcode = int(i), int(hashcode)
     if isinstance(tx, string_or_bytes_types):
         return serialize(signature_form(deserialize(tx), i, script, hashcode))
+    newtx = copy.deepcopy(tx)
+    for inp in newtx["ins"]:
+        inp["script"] = ""
+    newtx["ins"][i]["script"] = script
+    if hashcode == SIGHASH_NONE:
+        newtx["outs"] = []
+    elif hashcode == SIGHASH_SINGLE:
+        newtx["outs"] = newtx["outs"][:len(newtx["ins"])]
+        for out in range(len(newtx["ins"]) - 1):
+            out.value = 2**64 - 1
+            out.script = ""
+    elif hashcode == SIGHASH_ANYONECANPAY:
+        newtx["ins"] = [newtx["ins"][i]]
+    else:
+        pass
+    return newtx
+
+def clamsignature_form(tx, i, script, hashcode=SIGHASH_ALL):
+    i, hashcode = int(i), int(hashcode)
+    if isinstance(tx, string_or_bytes_types):
+        return clamserialize(clamsignature_form(clamdeserialize(tx), i, script, hashcode))
     newtx = copy.deepcopy(tx)
     for inp in newtx["ins"]:
         inp["script"] = ""
@@ -209,6 +310,15 @@ def mk_pubkey_script(addr):
 def mk_scripthash_script(addr):
     return 'a914' + b58check_to_hex(addr) + '87'
 
+
+def mk_clam_pubkey_script(addr):
+    # Keep the auxiliary functions around for altcoins' sake
+    return '76a914' + clam_b58check_to_hex(addr) + '88ac'
+
+
+def mk_clam_scripthash_script(addr):
+    return 'a914' + clam_b58check_to_hex(addr) + '87'
+
 # Address representation to output script
 
 
@@ -217,6 +327,12 @@ def address_to_script(addr):
         return mk_scripthash_script(addr)
     else:
         return mk_pubkey_script(addr)
+
+def clam_address_to_script(addr):
+    if addr[0] == 'x':
+        return mk_clam_pubkey_script(addr)
+    else:
+        return mk_clam_scripthash_script(addr)
 
 # Output script to address representation
 
@@ -344,6 +460,20 @@ def sign(tx, i, priv, hashcode=SIGHASH_ALL):
     txobj["ins"][i]["script"] = serialize_script([sig, pub])
     return serialize(txobj)
 
+def clamsign(tx, i, priv, hashcode=SIGHASH_ALL):
+    i = int(i)
+    if (not is_python2 and isinstance(re, bytes)) or not re.match('^[0-9a-fA-F]*$', tx):
+        return binascii.unhexlify(clamsign(safe_hexlify(tx), i, priv))
+    if len(priv) <= 33:
+        priv = safe_hexlify(priv)
+    pub = privkey_to_pubkey(priv)
+    address = pubtoclamaddr(pub)
+    signing_tx = clamsignature_form(tx, i, mk_pubkey_script(address), hashcode)
+    sig = ecdsa_tx_sign(signing_tx, priv, hashcode)
+    txobj = clamdeserialize(tx)
+    txobj["ins"][i]["script"] = serialize_script([sig, pub])
+    return clamserialize(txobj)
+
 
 def signall(tx, priv):
     # if priv is a dictionary, assume format is
@@ -431,6 +561,93 @@ def mktx(*args):
 
     return serialize(txobj)
 
+def mkclamtx(*args):
+    # [in0, in1...],[out0, out1...] or in0, in1 ... out0 out1 ...
+    ins, outs = [], []
+    for arg in args:
+        if isinstance(arg, list):
+            for a in arg: (ins if is_inp(a) else outs).append(a)
+        else:
+            (ins if is_inp(arg) else outs).append(arg)
+
+    txobj = {"locktime": 0, "version": 1, "ins": [], "outs": [], "time": int(time.time())}
+    for i in ins:
+        if isinstance(i, dict) and "outpoint" in i:
+            txobj["ins"].append(i)
+        else:
+            if isinstance(i, dict) and "output" in i:
+                i = i["output"]
+            txobj["ins"].append({
+                "outpoint": {"hash": i[:64], "index": int(i[65:])},
+                "script": "",
+                "sequence": 4294967295
+            })
+    for o in outs:
+        if isinstance(o, string_or_bytes_types):
+            addr = o[:o.find(':')]
+            val = int(o[o.find(':')+1:])
+            o = {}
+            if re.match('^[0-9a-fA-F]*$', addr):
+                o["script"] = addr
+            else:
+                o["address"] = addr
+            o["value"] = val
+
+        outobj = {}
+        if "address" in o:
+            outobj["script"] = clam_address_to_script(o["address"])
+        elif "script" in o:
+            outobj["script"] = o["script"]
+        else:
+            raise Exception("Could not find 'address' or 'script' in output.")
+        outobj["value"] = o["value"]
+        txobj["outs"].append(outobj)
+
+    return clamserialize(txobj)
+
+def mkclamspeechtx(comment,*args):
+    # [in0, in1...],[out0, out1...] or in0, in1 ... out0 out1 ...
+    ins, outs = [], []
+    for arg in args:
+        if isinstance(arg, list):
+            for a in arg: (ins if is_inp(a) else outs).append(a)
+        else:
+            (ins if is_inp(arg) else outs).append(arg)
+
+    txobj = {"locktime": 0, "version": 2, "ins": [], "outs": [], "time": int(time.time()), "comment": binascii.hexlify(comment)}
+    for i in ins:
+        if isinstance(i, dict) and "outpoint" in i:
+            txobj["ins"].append(i)
+        else:
+            if isinstance(i, dict) and "output" in i:
+                i = i["output"]
+            txobj["ins"].append({
+                "outpoint": {"hash": i[:64], "index": int(i[65:])},
+                "script": "",
+                "sequence": 4294967295
+            })
+    for o in outs:
+        if isinstance(o, string_or_bytes_types):
+            addr = o[:o.find(':')]
+            val = int(o[o.find(':')+1:])
+            o = {}
+            if re.match('^[0-9a-fA-F]*$', addr):
+                o["script"] = addr
+            else:
+                o["address"] = addr
+            o["value"] = val
+
+        outobj = {}
+        if "address" in o:
+            outobj["script"] = clam_address_to_script(o["address"])
+        elif "script" in o:
+            outobj["script"] = o["script"]
+        else:
+            raise Exception("Could not find 'address' or 'script' in output.")
+        outobj["value"] = o["value"]
+        txobj["outs"].append(outobj)
+
+    return clamserialize(txobj)
 
 def select(unspent, value):
     value = int(value)

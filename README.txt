@@ -1,4 +1,48 @@
-# Pybitcointools, Python library for Bitcoin signatures and transactions
+# Pybitcointools, Python library for Bitcoin signatures and transactions, fork supporting Clams
+
+### About the Clam fork:
+
+This is trentrussell's fork of vbuterin's pybitcointools with added support for Clams. The original comments of Vitalik start with the "Advantages" section below.
+Disclaimer: The clam code does not seem to work consistently. Sometimes signed transactions look correct and can be decoded, but clamd refuses to send them.
+However, if you keep recreating and resigning the transaction, it eventually works in the few test cases I have tried. If someone can discover the problem
+and fix it, please do so and fork or create a PR.
+
+Use at your own risk!
+
+### Clam example usage:
+
+Here is how to get a clam address from a private key or public key.
+
+> from bitcoin import *
+> privwif = "5KCB6mNiMjjd6mSNQsqsxSbzMedpzqEoq5BTdBBbPi9Tw5EuMvW"
+> priv = decode_privkey(privwif,get_privkey_format(privwif))
+> privkey_to_clamaddress(priv)
+'xAryp2xAD1pQcVk75XiYKqaktRmeGpV2Eh'
+> pub = privtopub(priv)
+> pubtoclamaddr(pub)
+'xAryp2xAD1pQcVk75XiYKqaktRmeGpV2Eh'
+
+Here is how to make and sign a clam transaction without speech:
+
+> ins1 = [{'output': u'90a6e34d1ef8aea717fa4d760f21db74827c57a13a7857330fe17f1976f5f92f:0', 'value': 500000, 'address': u'xAryp2xAD1pQcVk75XiYKqaktRmeGpV2Eh'}]
+> outs1 = [{'value': 400000, 'address': 'xQ5y6UKx7MtGSBkwaJvFVpWbVTBAD3p9Jv'}]
+> tx1 = mkclamtx(ins1,outs1)
+> tx1
+'0100000039cfd555012ff9f576197fe10f3357783aa1577c8274db210f764dfa17a7aef81e4de3a6900000000000ffffffff01801a0600000000001976a914ad1ca1df4a2dec9e71c75936b6efa2e118ddd78b88ac00000000'
+> stx1 = clamsign(tx1,0,privwif)
+> stx1
+'0100000039cfd555012ff9f576197fe10f3357783aa1577c8274db210f764dfa17a7aef81e4de3a690000000008b48304502210086b3b336d220f5cecf2fd08048529659bba5f1446dedca91d84ad6c032ea9b4302201a8ef01f5def7b08614fc04acf4d87b6ea991d9a0942eb700bae0f3e6360ab88014104aa4d663beda361b3b01dc447d2535199045d124fcff8f49b48da4a47b0dbe1990bb70ba48865e0da828c214223cd344427ad870b46d076e48df32f4d4b2de3f9ffffffff01801a0600000000001976a914ad1ca1df4a2dec9e71c75936b6efa2e118ddd78b88ac00000000'
+
+Here is how to make and sign a clam transaction with speech:
+
+> ins2 = [{'output': u'90a6e34d1ef8aea717fa4d760f21db74827c57a13a7857330fe17f1976f5f92f:1', 'value': 400000, 'address': u'xAryp2xAD1pQcVk75XiYKqaktRmeGpV2Eh'}]
+> outs2 = [{'value': 300000, 'address': 'xQ5y6UKx7MtGSBkwaJvFVpWbVTBAD3p9Jv'}]
+> tx2 = mkclamspeechtx("This is where the speech is.",ins2,outs2)
+> tx2
+'0200000087d2d555012ff9f576197fe10f3357783aa1577c8274db210f764dfa17a7aef81e4de3a6900100000000ffffffff01e0930400000000001976a914ad1ca1df4a2dec9e71c75936b6efa2e118ddd78b88ac000000001c5468697320697320776865726520746865207370656563682069732e'
+> stx2 = clamsign(tx2,0,privwif)
+> stx2
+'0200000087d2d555012ff9f576197fe10f3357783aa1577c8274db210f764dfa17a7aef81e4de3a690010000008b483045022100f665aa68b28797aea7b47093214195d5e9357dcd8e35c1b76d9111561c613d4c022060af9fa1855761d3e1226eb7b040875e4348abc919889d8429f12308db6b64d5014104aa4d663beda361b3b01dc447d2535199045d124fcff8f49b48da4a47b0dbe1990bb70ba48865e0da828c214223cd344427ad870b46d076e48df32f4d4b2de3f9ffffffff01e0930400000000001976a914ad1ca1df4a2dec9e71c75936b6efa2e118ddd78b88ac000000001c5468697320697320776865726520746865207370656563682069732e'
 
 ### Advantages:
 
